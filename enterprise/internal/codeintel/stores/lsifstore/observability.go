@@ -19,6 +19,7 @@ type operations struct {
 	packageInformation            *observation.Operation
 	ranges                        *observation.Operation
 	references                    *observation.Operation
+	implementations               *observation.Operation
 	documentationPage             *observation.Operation
 	documentationPathInfo         *observation.Operation
 	documentationIDsToPathIDs     *observation.Operation
@@ -77,6 +78,7 @@ func newOperations(observationContext *observation.Context) *operations {
 		packageInformation:            op("PackageInformation"),
 		ranges:                        op("Ranges"),
 		references:                    op("References"),
+		implementations:               op("Implementations"),
 		documentationPage:             op("DocumentationPage"),
 		documentationPathInfo:         op("DocumentationPathInfo"),
 		documentationIDsToPathIDs:     op("DocumentationIDsToPathIDs"),
