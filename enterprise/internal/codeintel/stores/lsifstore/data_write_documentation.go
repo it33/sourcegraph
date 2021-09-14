@@ -2,20 +2,24 @@ package lsifstore
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 
+	"github.com/cockroachdb/errors"
 	"github.com/keegancsmith/sqlf"
 	"github.com/opentracing/opentracing-go/log"
 
+	"github.com/sourcegraph/sourcegraph/enterprise/internal/codeintel/stores/dbstore"
 	"github.com/sourcegraph/sourcegraph/internal/database/batch"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
+	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/codeintel/precise"
 )
 
 // WriteDocumentationPages is called (transactionally) from the precise-code-intel-worker.
-func (s *Store) WriteDocumentationPages(ctx context.Context, bundleID int, documentationPages chan *precise.DocumentationPageData) (err error) {
+func (s *Store) WriteDocumentationPages(ctx context.Context, upload dbstore.Upload, repo *types.Repo, documentationPages chan *precise.DocumentationPageData) (err error) {
 	ctx, traceLog, endObservation := s.operations.writeDocumentationPages.WithAndLogger(ctx, &err, observation.Args{LogFields: []log.Field{
-		log.Int("bundleID", bundleID),
+		log.Int("bundleID", upload.ID),
 	}})
 	defer endObservation(1, observation.Args{})
 
@@ -32,13 +36,18 @@ func (s *Store) WriteDocumentationPages(ctx context.Context, bundleID int, docum
 
 	var count uint32
 	inserter := func(inserter *batch.Inserter) error {
-		for v := range documentationPages {
-			data, err := s.serializer.MarshalDocumentationPageData(v)
+		for page := range documentationPages {
+			// Write to search table.
+			if err := tx.WriteDocumentationSearch(ctx, NewDocumentationSearchInfo(upload), repo, page); err != nil {
+				return errors.Wrap(err, "WriteDocumentationSearch")
+			}
+
+			data, err := s.serializer.MarshalDocumentationPageData(page)
 			if err != nil {
 				return err
 			}
 
-			if err := inserter.Insert(ctx, v.Tree.PathID, data); err != nil {
+			if err := inserter.Insert(ctx, page.Tree.PathID, data); err != nil {
 				return err
 			}
 
@@ -61,7 +70,7 @@ func (s *Store) WriteDocumentationPages(ctx context.Context, bundleID int, docum
 
 	// Insert the values from the temporary table into the target table. We select a
 	// parameterized dump id here since it is the same for all rows in this operation.
-	return tx.Exec(ctx, sqlf.Sprintf(writeDocumentationPagesInsertQuery, bundleID))
+	return tx.Exec(ctx, sqlf.Sprintf(writeDocumentationPagesInsertQuery, upload.ID))
 }
 
 const writeDocumentationPagesTemporaryTableQuery = `
@@ -206,4 +215,93 @@ const writeDocumentationMappingsInsertQuery = `
 INSERT INTO lsif_data_documentation_mappings (dump_id, path_id, result_id, file_path)
 SELECT %s, source.path_id, source.result_id, source.file_path
 FROM t_lsif_data_documentation_mappings source
+`
+
+type DocumentationSearchInfo struct {
+	ID             int
+	RepositoryName string
+	RepositoryID   int
+	Indexer        string
+}
+
+func NewDocumentationSearchInfo(dumpOrUpload interface{}) DocumentationSearchInfo {
+	switch v := dumpOrUpload.(type) {
+	case *dbstore.Dump:
+		return DocumentationSearchInfo{
+			ID:             v.ID,
+			RepositoryName: v.RepositoryName,
+			RepositoryID:   v.RepositoryID,
+			Indexer:        v.Indexer,
+		}
+	case *dbstore.Upload:
+		return DocumentationSearchInfo{
+			ID:             v.ID,
+			RepositoryName: v.RepositoryName,
+			RepositoryID:   v.RepositoryID,
+			Indexer:        v.Indexer,
+		}
+	default:
+		panic("invariant")
+	}
+}
+
+// WriteDocumentationSearch is called (within a transaction) to write the search index for a given documentation page.
+func (s *Store) WriteDocumentationSearch(ctx context.Context, meta DocumentationSearchInfo, repo *types.Repo, page *precise.DocumentationPageData) (err error) {
+	ctx, traceLog, endObservation := s.operations.writeDocumentationSearch.WithAndLogger(ctx, &err, observation.Args{LogFields: []log.Field{
+		log.Int("bundleID", meta.ID),
+	}})
+	defer endObservation(1, observation.Args{})
+
+	// This will not always produce a proper language name, e.g. if an indexer is not named after
+	// the language or is not in "lsif-$LANGUAGE" format. That's OK: in that case, the "language tag"
+	// is the indexer name which is likely good enough!
+	languageTag := strings.ToLower(strings.TrimPrefix(meta.Indexer, "lsif-"))
+
+	var count uint32
+	var index func(node *precise.DocumentationNode) error
+	index = func(node *precise.DocumentationNode) error {
+		if node.Documentation.SearchKey != "" {
+			tags := []string{languageTag}
+			for _, tag := range node.Documentation.Tags {
+				tags = append(tags, string(tag))
+			}
+			err := s.Exec(ctx, sqlf.Sprintf(
+				writeDocumentationSearchInsertQuery,
+				meta.ID,
+				node.PathID,
+				meta.RepositoryName,
+				node.Documentation.SearchKey,
+				node.Label.String(),
+				node.Detail.String(),
+				strings.Join(tags, " "),
+				meta.RepositoryID,
+				repo.Private,
+			))
+			if err != nil {
+				return err
+			}
+			count++
+		}
+
+		// Index descendants.
+		for _, child := range node.Children {
+			if child.Node != nil {
+				if err := index(child.Node); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := index(page.Tree); err != nil {
+		return err
+	}
+	traceLog(log.Int("numRecords", int(count)))
+	return nil
+}
+
+const writeDocumentationSearchInsertQuery = `
+-- source: enterprise/internal/codeintel/stores/lsifstore/data_write_documentation.go:WriteDocumentationSearch
+INSERT INTO lsif_data_documentation_search (dump_id, path_id, repo_name, search_key, label, detail, tags, repo_id, repo_private)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
 `
