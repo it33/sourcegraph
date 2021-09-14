@@ -1000,6 +1000,7 @@ export function handleCodeHost({
                     getPositionAdjuster,
                     getToolbarMount,
                     toolbarButtonProps,
+                    overrideTokenize,
                 } = codeViewEvent
 
                 const initializeModelAndViewerForFileInfo = async (
@@ -1211,7 +1212,9 @@ export function handleCodeHost({
                                 positionEvents: of(element).pipe(
                                     findPositionsFromEvents({
                                         domFunctions,
-                                        tokenize: codeHost.codeViewsRequireTokenization !== false,
+                                        tokenize: !!(typeof overrideTokenize === 'boolean'
+                                            ? overrideTokenize
+                                            : codeHost.codeViewsRequireTokenization),
                                     })
                                 ),
                                 resolveContext,
@@ -1219,6 +1222,7 @@ export function handleCodeHost({
                                 scrollBoundaries: codeViewEvent.getScrollBoundaries
                                     ? codeViewEvent.getScrollBoundaries(codeViewEvent.element)
                                     : [],
+                                overrideTokenize,
                             })
                         }
                     })
@@ -1229,9 +1233,16 @@ export function handleCodeHost({
                 // Render toolbar
                 if (getToolbarMount && !minimalUI) {
                     const mount = getToolbarMount(element)
+
+                    // TODO(tj): each code view should be able to configure toolbar styles
+                    console.log(codeHost.codeViewToolbarClassProps, codeViewEvent.toolbarButtonProps)
                     render(
                         <CodeViewToolbar
                             {...codeHost.codeViewToolbarClassProps}
+                            actionItemClass={
+                                codeViewEvent.toolbarButtonProps?.className ??
+                                codeHost.codeViewToolbarClassProps?.actionItemClass
+                            }
                             hideActions={hideActions}
                             fileInfoOrError={diffOrBlobInfo}
                             sourcegraphURL={sourcegraphURL}

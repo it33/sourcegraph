@@ -12,7 +12,7 @@ import { createNotificationClassNameGetter } from '../shared/getNotificationClas
 import { ViewResolver } from '../shared/views'
 
 import { getContext } from './context'
-import { diffDOMFunctions, singleFileDOMFunctions } from './domFunctions'
+import { diffDOMFunctions, newDiffDOMFunctions, singleFileDOMFunctions } from './domFunctions'
 import {
     resolveCommitViewFileInfo,
     resolveCompareFileInfo,
@@ -25,13 +25,16 @@ import { isCommitsView, isCompareView, isPullRequestView, isSingleFileView } fro
 /**
  * Gets or creates the toolbar mount for allcode views.
  */
-export const getToolbarMount = (codeView: HTMLElement): HTMLElement => {
+export const getToolbarMount = (
+    codeView: HTMLElement,
+    fileToolbarSelector = '.file-toolbar .secondary'
+): HTMLElement => {
     const existingMount = codeView.querySelector<HTMLElement>('.sg-toolbar-mount')
     if (existingMount) {
         return existingMount
     }
 
-    const fileActions = codeView.querySelector<HTMLElement>('.file-toolbar .secondary')
+    const fileActions = codeView.querySelector<HTMLElement>(fileToolbarSelector)
     if (!fileActions) {
         throw new Error('Unable to find mount location')
     }
@@ -100,6 +103,8 @@ const baseDiffCodeView: Omit<CodeView, 'element' | 'resolveFileInfo'> = {
     dom: diffDOMFunctions,
     getPositionAdjuster: () => createPositionAdjuster(diffDOMFunctions),
     toolbarButtonProps,
+    // Bitbucket diff views are not tokenized.
+    overrideTokenize: true,
 }
 /**
  * A code view spec for a single file "diff to previous" view
@@ -158,6 +163,40 @@ const codeViewResolver: ViewResolver<CodeView> = {
     },
 }
 
+/**
+ * TODO(tj): Bitbucket v7+ diff resolver
+ * test on PR and compare
+ */
+const diffCodeViewResolver: ViewResolver<CodeView> = {
+    selector: '.change-view',
+    resolveView: element => ({ element, ...newDiffCodeView }),
+}
+
+// Try setting it at runtime?????
+const newToolbarButtonProps = {
+    className: 'aui-button', // Start with the old button class, replace when finding toolbar mount
+}
+
+/**
+ * New diff code view element.
+ * As of Bitbucket v7.11.2, this is only used for the pull request page.
+ */
+const newDiffCodeView: Omit<CodeView, 'element'> = {
+    resolveFileInfo: resolvePullRequestFileInfo,
+    getToolbarMount: codeView => {
+        const toolbarMount = getToolbarMount(codeView, '.change-header .diff-actions')
+
+        const buttonClass = toolbarMount.parentElement?.querySelector('button')?.className
+        if (buttonClass) {
+            newToolbarButtonProps.className = buttonClass
+        }
+
+        return toolbarMount
+    },
+    toolbarButtonProps: newToolbarButtonProps,
+    dom: newDiffDOMFunctions,
+}
+
 const getCommandPaletteMount: MountGetter = (container: HTMLElement): HTMLElement | null => {
     const headerElement = querySelectorOrSelf(container, '.aui-header-primary .aui-nav')
     if (!headerElement) {
@@ -208,7 +247,7 @@ export const bitbucketServerCodeHost: CodeHost = {
     type: 'bitbucket-server',
     name: 'Bitbucket Server',
     check: checkIsBitbucket,
-    codeViewResolvers: [codeViewResolver],
+    codeViewResolvers: [codeViewResolver, diffCodeViewResolver],
     getCommandPaletteMount,
     notificationClassNames,
     commandPaletteClassProps: {
