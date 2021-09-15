@@ -223,6 +223,7 @@ describe('Blob viewer', () => {
                         extensions: {
                             nodes: [
                                 {
+                                    id: 'test',
                                     extensionID: 'test/test',
                                     manifest: {
                                         jsonFields: extensionManifest,
@@ -292,6 +293,7 @@ describe('Blob viewer', () => {
         })
 
         interface MockExtension {
+            id: string
             extensionID: string
             extensionManifest: ExtensionManifest
             /**
@@ -308,6 +310,7 @@ describe('Blob viewer', () => {
         it('adds and clears line decoration attachments properly', async () => {
             const mockExtensions: MockExtension[] = [
                 {
+                    id: 'test',
                     extensionID: 'test/fixed-line',
                     extensionManifest: {
                         url: new URL(
@@ -616,6 +619,7 @@ describe('Blob viewer', () => {
              */
 
             const wordFinder: MockExtension = {
+                id: 'word-finder',
                 extensionID: 'test/word-finder',
                 extensionManifest: {
                     url: new URL(
@@ -904,6 +908,7 @@ describe('Blob viewer', () => {
                         extensions: {
                             nodes: [
                                 {
+                                    id: 'test',
                                     extensionID: 'test/references',
                                     manifest: {
                                         jsonFields: extensionManifest,
