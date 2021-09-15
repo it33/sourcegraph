@@ -372,6 +372,7 @@ describe('Blob viewer', () => {
                     },
                 },
                 {
+                    id: 'selected-line',
                     extensionID: 'test/selected-line',
                     extensionManifest: {
                         url: new URL(
